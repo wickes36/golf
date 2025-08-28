@@ -1,18 +1,22 @@
 // File: netlify/functions/get-tts.js
 
 exports.handler = async function(event, context) {
-  // Only allow POST requests, which will contain the text to convert
+  console.log("get-tts function invoked.");
+
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
   try {
-    // Get the text from the game's request
-    const { text } = JSON.parse(event.body);
-    // Securely get your API key from Netlify's environment variables
     const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.error("GEMINI_API_KEY environment variable not set.");
+      throw new Error("GEMINI_API_KEY environment variable not set.");
+    }
+    console.log("API Key found.");
 
-    // Prepare the request payload for the Gemini TTS API
+    const { text } = JSON.parse(event.body);
+
     const payload = {
         contents: [{ parts: [{ text }] }],
         generationConfig: {
@@ -22,7 +26,6 @@ exports.handler = async function(event, context) {
         model: "gemini-2.5-flash-preview-tts"
     };
 
-    // Call the Gemini API
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -30,24 +33,30 @@ exports.handler = async function(event, context) {
     });
 
     if (!response.ok) {
-        throw new Error(`API call failed with status: ${response.status}`);
+        const errorBody = await response.text();
+        console.error(`API call failed with status: ${response.status}`, errorBody);
+        throw new Error(`API call failed with status: ${response.status} - ${errorBody}`);
     }
 
     const result = await response.json();
-    // Extract the audio data from the response
+    
+    if (!result.candidates || result.candidates.length === 0) {
+        console.error("API returned no candidates in the response.");
+        throw new Error("API returned no candidates in the response.");
+    }
+    
     const audioData = result.candidates[0].content.parts[0].inlineData.data;
 
-    // Send the audio data back to the game
     return {
       statusCode: 200,
       body: JSON.stringify({ audioData }),
     };
 
   } catch (error) {
-    console.error('Error in get-tts function:', error);
+    console.error('Error in get-tts function:', error.message);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: 'Failed to fetch TTS audio.' }),
+      body: JSON.stringify({ error: `Failed to fetch TTS audio: ${error.message}` }),
     };
   }
 };
