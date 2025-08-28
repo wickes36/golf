@@ -1,113 +1,1283 @@
-// File: netlify/functions/get-pro-tip.js
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Pocket Pro Golf Tour</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --color-fairway-light: #4ade80;
+            --color-fairway-dark: #22c55e;
+            --color-rough-light: #22c55e;
+            --color-rough-dark: #16a34a;
+            --color-green-light: #86efac;
+            --color-green-dark: #4ade80;
+            --color-sand-light: #fde68a;
+            --color-sand-dark: #facc15;
+            --color-water-light: #7dd3fc;
+            --color-water-dark: #38bdf8;
+            --color-sky: #a5f3fc;
+            --color-text: #f8fafc;
+            --color-panel: rgba(15, 23, 42, 0.8);
+        }
 
-exports.handler = async function(event, context) {
-  // Only allow POST requests
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: 'Method Not Allowed' };
-  }
+        /* Basic Setup */
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: var(--color-sky);
+            font-family: 'Inter', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
 
-  try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    // Check if the API key is available
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY environment variable not set.");
-    }
+        #game-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
 
-    const { holeNumber, par, distToPin, hazardsDescription, wind } = JSON.parse(event.body);
+        canvas {
+            display: block;
+            background-color: var(--color-rough-dark);
+        }
+        
+        /* Splash Screen */
+        #splashscreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, var(--color-green-dark), var(--color-fairway-dark));
+            z-index: 100;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            transition: opacity 0.5s ease-out;
+            opacity: 1;
+        }
+        #splashscreen.hide {
+            opacity: 0;
+            pointer-events: none;
+        }
+        #splash-title {
+            font-size: clamp(2.5rem, 10vw, 5rem);
+            font-weight: 900;
+            color: white;
+            text-shadow: 3px 3px 0px rgba(0,0,0,0.15);
+            margin: 0;
+            animation: pop-in 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+        .splash-icon {
+            position: absolute;
+            width: clamp(40px, 15vw, 100px);
+            height: auto;
+            opacity: 0;
+        }
+        #splash-ball {
+            bottom: 15%;
+            left: 15%;
+            animation: fly-in 1s 0.2s forwards;
+        }
+        #splash-flag {
+            top: 15%;
+            right: 15%;
+            animation: fly-in 1s 0.4s forwards;
+        }
+         #splash-tee {
+            bottom: 25%;
+            right: 20%;
+            width: clamp(20px, 8vw, 50px);
+            animation: fly-in 1s 0.6s forwards;
+        }
+        @keyframes pop-in {
+            from { transform: scale(0.5); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+        @keyframes fly-in {
+            from { transform: translateY(100px) scale(0.5); opacity: 0; }
+            to { transform: translateY(0) scale(1); opacity: 1; }
+        }
 
-    const systemPrompt = "You are a professional golf caddy named 'Ace'. Your goal is to provide a brief, encouraging, and strategic tip for playing a golf hole based on its layout. Analyze the hazards and suggest a smart play. Keep your advice to 2-3 short sentences. Be direct and start with your recommendation.";
-    const userQuery = `Ace, I'm on Hole ${holeNumber}, a ${distToPin} yard Par ${par}. ${hazardsDescription} The wind is ${wind}. What's the play?`;
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: userQuery }] }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-      })
-    });
+        /* HUD (Heads-Up Display) */
+        #hud {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 12px 16px;
+            box-sizing: border-box;
+            color: var(--color-text);
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.6), transparent);
+            z-index: 10;
+            pointer-events: none;
+            font-size: 14px;
+        }
+        #hud-left, #hud-right {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        #hud-right {
+            text-align: right;
+        }
+        .hud-item {
+            font-weight: 600;
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.5);
+        }
+        .hud-item span {
+            font-weight: 400;
+        }
+        
+        /* Gemini Caddy Tip Panel */
+        #caddy-tip-panel {
+            position: fixed;
+            top: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 400px;
+            background-color: var(--color-panel);
+            color: var(--color-text);
+            border-radius: 12px;
+            padding: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+        }
+        #caddy-tip-panel.visible {
+            opacity: 1;
+        }
+        #caddy-tip-text {
+            flex-grow: 1;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        #caddy-audio-btn {
+            pointer-events: all;
+            cursor: pointer;
+            background: none;
+            border: none;
+            padding: 5px;
+        }
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: var(--color-text);
+            animation: spin 1s ease-in-out infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
 
-    if (!response.ok) {
-        const errorBody = await response.text();
-        throw new Error(`API call failed with status: ${response.status} - ${errorBody}`);
-    }
+
+        /* Controls */
+        #controls {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            padding: 16px;
+            box-sizing: border-box;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        #club-selection, #power-meter-container {
+            background-color: var(--color-panel);
+            border-radius: 12px;
+            padding: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            pointer-events: all;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        #club-selection {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .club-btn {
+            background-color: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: var(--color-text);
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .club-btn.selected {
+            background-color: var(--color-fairway-light);
+            color: #064e3b;
+            border-color: var(--color-fairway-light);
+        }
+
+        #power-meter-container {
+            width: 80px;
+            height: 200px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #power-meter-bar {
+            width: 20px;
+            height: 180px;
+            border: 2px solid var(--color-text);
+            border-radius: 10px;
+            position: relative;
+            overflow: hidden;
+        }
+        #power-indicator {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            background: linear-gradient(to top, #fde047, #f97316, #ef4444);
+        }
+
+        /* Modal Dialog */
+        #modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+        }
+        #modal.visible {
+            opacity: 1;
+            pointer-events: all;
+        }
+        #modal-content {
+            background-color: #1e293b;
+            color: var(--color-text);
+            padding: 24px;
+            border-radius: 16px;
+            text-align: center;
+            width: 85%;
+            max-width: 350px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            transform: scale(0.9);
+            transition: transform 0.3s;
+        }
+        #modal.visible #modal-content {
+            transform: scale(1);
+        }
+        #modal-title {
+            font-size: 28px;
+            font-weight: 700;
+            margin: 0 0 8px;
+        }
+        #modal-text {
+            font-size: 16px;
+            margin: 0 0 20px;
+            opacity: 0.9;
+        }
+        #modal-btn-container {
+            display: flex;
+            gap: 10px;
+        }
+        .modal-btn {
+            background-color: var(--color-fairway-light);
+            color: #064e3b;
+            border: none;
+            border-radius: 10px;
+            padding: 12px 24px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            flex-grow: 1;
+        }
+        .modal-btn.secondary {
+            background-color: #475569;
+            color: var(--color-text);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="splashscreen">
+        <h1 id="splash-title">Milo's Golf Game</h1>
+        <svg id="splash-ball" class="splash-icon" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <radialGradient id="ballGradient" cx="0.3" cy="0.3" r="0.7">
+                    <stop offset="0%" stop-color="#ffffff" />
+                    <stop offset="100%" stop-color="#e0e0e0" />
+                </radialGradient>
+            </defs>
+            <circle cx="50" cy="50" r="48" fill="url(#ballGradient)" stroke="#cccccc" stroke-width="2"/>
+        </svg>
+        <svg id="splash-flag" class="splash-icon" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+            <line x1="10" y1="90" x2="10" y2="10" stroke="white" stroke-width="4" />
+            <polygon points="10,10 60,30 10,50" fill="#ef4444" />
+        </svg>
+        <svg id="splash-tee" class="splash-icon" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+            <polygon points="30,80 70,80 80,95 20,95" fill="#ffffff" />
+            <rect x="45" y="20" width="10" height="60" fill="#ffffff" />
+            <rect x="35" y="10" width="30" height="10" rx="5" fill="#ffffff" />
+        </svg>
+    </div>
+
+    <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+    </div>
+
+    <!-- Heads-Up Display -->
+    <div id="hud">
+        <div id="hud-left">
+            <div class="hud-item">Hole: <span id="hud-hole">1</span></div>
+            <div class="hud-item">Par: <span id="hud-par">3</span></div>
+            <div class="hud-item">Strokes: <span id="hud-strokes">0</span></div>
+        </div>
+        <div id="caddy-tip-panel">
+            <div id="caddy-tip-text">✨ Thinking...</div>
+            <button id="caddy-audio-btn">
+                <div class="spinner"></div>
+            </button>
+        </div>
+        <div id="hud-right">
+            <div class="hud-item">Total: <span id="hud-total-score">E</span></div>
+            <div class="hud-item">Wind: <span id="hud-wind">5mph N</span></div>
+            <div class="hud-item">To Pin: <span id="hud-distance">150y</span></div>
+        </div>
+    </div>
+
+    <!-- Controls -->
+    <div id="controls">
+        <div id="club-selection">
+            <!-- Club buttons will be dynamically generated here -->
+        </div>
+        <div id="power-meter-container">
+            <div id="power-meter-bar">
+                <div id="power-indicator" style="height: 0%;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal -->
+    <div id="modal">
+        <div id="modal-content">
+            <h2 id="modal-title">Birdie!</h2>
+            <p id="modal-text">You finished the hole in 2 strokes.</p>
+            <div id="modal-btn-container">
+                 <button id="modal-btn-main" class="modal-btn">Next Hole</button>
+            </div>
+        </div>
+    </div>
     
-    const result = await response.json();
-    
-    if (!result.candidates || result.candidates.length === 0) {
-        throw new Error("API returned no candidates in the response.");
-    }
-    
-    const tip = result.candidates[0].content.parts[0].text;
+    <audio id="caddy-audio"></audio>
 
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ tip }),
+    <script>
+    // --- SETUP ---
+    const canvas = document.getElementById('game-canvas');
+    const ctx = canvas.getContext('2d');
+
+    // --- DOM ELEMENTS ---
+    const hudHole = document.getElementById('hud-hole');
+    const hudPar = document.getElementById('hud-par');
+    const hudStrokes = document.getElementById('hud-strokes');
+    const hudTotalScore = document.getElementById('hud-total-score');
+    const hudWind = document.getElementById('hud-wind');
+    const hudDistance = document.getElementById('hud-distance');
+    const clubSelectionContainer = document.getElementById('club-selection');
+    const powerIndicator = document.getElementById('power-indicator');
+    const modal = document.getElementById('modal');
+    const modalTitle = document.getElementById('modal-title');
+    const modalText = document.getElementById('modal-text');
+    const modalBtnContainer = document.getElementById('modal-btn-container');
+    const caddyTipPanel = document.getElementById('caddy-tip-panel');
+    const caddyTipText = document.getElementById('caddy-tip-text');
+    const caddyAudioBtn = document.getElementById('caddy-audio-btn');
+    const caddyAudio = document.getElementById('caddy-audio');
+    const splashscreen = document.getElementById('splashscreen');
+
+    // --- GAME STATE ---
+    let gameState = {
+        currentHole: 0,
+        totalScore: 0,
+        strokesForHole: 0,
+        isAiming: false,
+        isHitting: false,
+        isShotInProgress: false,
+        ballInMotion: false,
+        power: 0,
+        aimAngle: 0,
+        camera: { x: 0, y: 0, targetX: 0, targetY: 0, zoom: 1, targetZoom: 1 },
+        wind: { x: 0, y: 0, speed: 0, angle: 0 },
+        lastShotPosition: { x: 0, y: 0 },
+        viewMode: 'flyover', // 'flyover', 'aiming', 'shot'
+        flyoverProgress: 0
     };
 
-  } catch (error) {
-    console.error('Error in get-pro-tip function:', error.message);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: `Failed to fetch caddy tip: ${error.message}` }),
+    // --- GAME CONFIG ---
+    const PIXELS_PER_YARD = 2.5;
+    const CLUBS = {
+        'DR': { power: 110, name: 'Driver' },
+        '3W': { power: 95, name: '3-Wood' },
+        '5I': { power: 80, name: '5-Iron' },
+        '7I': { power: 65, name: '7-Iron' },
+        'PW': { power: 45, name: 'Pitching Wedge' },
+        'PT': { power: 20, name: 'Putter' }
     };
-  }
-};
-```javascript
-// File: netlify/functions/get-tts.js
+    let selectedClub = '7I';
+    
+    const COLORS = {};
+    const TERRAIN_MAP = {
+        f: 'fairway',
+        g: 'green',
+        s: 'sand',
+        w: 'water',
+        r: 'rough'
+    };
 
-exports.handler = async function(event, context) {
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: 'Method Not Allowed' };
-  }
 
-  try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    // Check if the API key is available
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY environment variable not set.");
+    // --- AUDIO CONTEXT ---
+    let audioCtx;
+    function initAudio() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+    }
+    
+    function playSound(type) {
+        if (!audioCtx) return;
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        if (type === 'hit') {
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(300, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        } else if (type === 'cup') {
+            oscillator.type = 'sawtooth';
+            oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.8);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.8);
+        } else if (type === 'water') {
+            oscillator.type = 'triangle';
+            oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.4, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.6);
+        }
     }
 
-    const { text } = JSON.parse(event.body);
-
-    const payload = {
-        contents: [{ parts: [{ text }] }],
-        generationConfig: {
-            responseModalities: ["AUDIO"],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Charon" } } }
+    // --- HOLE DEFINITIONS ---
+    const holes = [
+        { // Hole 1: Straight Par 3
+            par: 3, tee: { x: 400, y: 1000 }, hole: { x: 400, y: 200 },
+            terrain: [
+                { type: 'f', shape: 'path', points: [{x:350,y:1050},{x:450,y:1050},{x:460,y:500},{x:450,y:150},{x:350,y:150},{x:340,y:500}] },
+                { type: 'g', shape: 'path', points: [{x:350,y:250},{x:450,y:250},{x:470,y:200},{x:450,y:150},{x:350,y:150},{x:330,y:200}] },
+                { type: 's', shape: 'path', points: [{x:300,y:240},{x:340,y:250},{x:350,y:220},{x:320,y:190}] },
+                { type: 's', shape: 'path', points: [{x:480,y:210},{x:500,y:180},{x:470,y:160},{x:450,y:180}] },
+            ]
         },
-        model: "gemini-2.5-flash-preview-tts"
+        { // Hole 2: Dogleg Right Par 4
+            par: 4, tee: { x: 200, y: 1000 }, hole: { x: 600, y: 250 },
+            terrain: [
+                { type: 'f', shape: 'path', points: [{x:150,y:1050},{x:250,y:1050},{x:260,y:500},{x:550,y:480},{x:700,y:300},{x:700,y:200},{x:500,y:200},{x:500,y:400},{x:160,y:450}] },
+                { type: 'w', shape: 'path', points: [{x:260,y:700},{x:500,y:680},{x:480,y:500},{x:270,y:520}] },
+                { type: 'g', shape: 'path', points: [{x:550,y:300},{x:650,y:300},{x:670,y:250},{x:650,y:200},{x:550,y:200},{x:530,y:250}] },
+                { type: 's', shape: 'path', points: [{x:500,y:350},{x:540,y:360},{x:550,y:320},{x:520,y:290}] },
+            ]
+        },
+        { // Hole 3: Island Green Par 3
+            par: 3, tee: { x: 400, y: 800 }, hole: { x: 400, y: 200 },
+            terrain: [
+                { type: 'w', shape: 'path', points: [{x:100,y:450},{x:700,y:430},{x:680,y:50},{x:120,y:70}] },
+                { type: 'f', shape: 'path', points: [{x:360,y:840},{x:440,y:840},{x:450,y:800},{x:440,y:760},{x:360,y:760},{x:350,y:800}] },
+                { type: 'g', shape: 'path', points: [{x:320,y:280},{x:480,y:280},{x:500,y:200},{x:480,y:120},{x:320,y:120},{x:300,y:200}] },
+                { type: 's', shape: 'path', points: [{x:460,y:190},{x:500,y:180},{x:490,y:140},{x:450,y:150}] },
+            ]
+        },
+        { // Hole 4: Dogleg Left Par 4
+            par: 4, tee: { x: 600, y: 1000 }, hole: { x: 200, y: 250 },
+            terrain: [
+                { type: 'f', shape: 'path', points: [{x:550,y:1050},{x:650,y:1050},{x:640,y:500},{x:350,y:480},{x:150,y:300},{x:150,y:200},{x:300,y:200},{x:300,y:400},{x:540,y:450}] },
+                { type: 's', shape: 'path', points: [{x:350,y:550},{x:450,y:540},{x:460,y:480},{x:360,y:470}] },
+                { type: 'g', shape: 'path', points: [{x:150,y:300},{x:250,y:300},{x:270,y:250},{x:250,y:200},{x:150,y:200},{x:130,y:250}] },
+            ]
+        },
+        { // Hole 5: Long Par 5
+            par: 5, tee: { x: 400, y: 1100 }, hole: { x: 400, y: 150 },
+            terrain: [
+                { type: 'f', shape: 'path', points: [{x:350,y:1150},{x:450,y:1150},{x:460,y:100},{x:340,y:100}] },
+                { type: 'w', shape: 'path', points: [{x:500,y:1150},{x:550,y:1150},{x:560,y:100},{x:490,y:100}] },
+                { type: 's', shape: 'path', points: [{x:300,y:600},{x:340,y:610},{x:350,y:580},{x:320,y:550}] },
+                { type: 'g', shape: 'path', points: [{x:350,y:200},{x:450,y:200},{x:460,y:150},{x:450,y:100},{x:350,y:100},{x:340,y:150}] },
+            ]
+        },
+        { // Hole 6: Short Par 3 Over Water
+            par: 3, tee: { x: 200, y: 600 }, hole: { x: 600, y: 400 },
+            terrain: [
+                { type: 'f', shape: 'path', points: [{x:150,y:650},{x:250,y:650},{x:260,y:600},{x:250,y:550},{x:150,y:550},{x:140,y:600}] },
+                { type: 'w', shape: 'path', points: [{x:260,y:620},{x:550,y:580},{x:580,y:350},{x:270,y:380}] },
+                { type: 'g', shape: 'path', points: [{x:550,y:450},{x:650,y:450},{x:670,y:400},{x:650,y:350},{x:550,y:350},{x:530,y:400}] },
+                { type: 's', shape: 'path', points: [{x:530,y:380},{x:550,y:360},{x:540,y:340},{x:520,y:350}] },
+            ]
+        },
+        { // Hole 7: Par 4 with Fairway Bunker
+            par: 4, tee: { x: 400, y: 1000 }, hole: { x: 400, y: 300 },
+            terrain: [
+                { type: 'f', shape: 'path', points: [{x:300,y:1050},{x:500,y:1050},{x:520,y:250},{x:280,y:250}] },
+                { type: 's', shape: 'path', points: [{x:350,y:700},{x:450,y:700},{x:460,y:650},{x:340,y:650}] },
+                { type: 'g', shape: 'path', points: [{x:350,y:350},{x:450,y:350},{x:470,y:300},{x:450,y:250},{x:350,y:250},{x:330,y:300}] },
+            ]
+        },
+        { // Hole 8: Par 5 with Trees
+            par: 5, tee: { x: 200, y: 1100 }, hole: { x: 600, y: 200 },
+            terrain: [
+                { type: 'f', shape: 'path', points: [{x:150,y:1150},{x:250,y:1150},{x:300,y:500},{x:500,y:400},{x:700,y:250},{x:650,y:150},{x:450,y:300},{x:250,y:450}] },
+                { type: 'g', shape: 'path', points: [{x:550,y:250},{x:650,y:250},{x:670,y:200},{x:650,y:150},{x:550,y:150},{x:530,y:200}] },
+                { type: 'r', shape: 'path', points: [{x:400,y:600},{x:420,y:600},{x:420,y:580},{x:400,y:580}] }, // Tree 1
+                { type: 'r', shape: 'path', points: [{x:450,y:550},{x:470,y:550},{x:470,y:530},{x:450,y:530}] }, // Tree 2
+            ]
+        },
+        { // Hole 9: Finishing Par 4
+            par: 4, tee: { x: 200, y: 900 }, hole: { x: 600, y: 200 },
+            terrain: [
+                { type: 'f', shape: 'path', points: [{x:150,y:950},{x:250,y:950},{x:300,y:500},{x:550,y:250},{x:650,y:150},{x:500,y:450},{x:250,y:480}] },
+                { type: 'w', shape: 'path', points: [{x:550,y:300},{x:680,y:280},{x:690,y:150},{x:560,y:160}] },
+                { type: 's', shape: 'path', points: [{x:500,y:250},{x:540,y:260},{x:550,y:220},{x:520,y:190}] },
+                { type: 'g', shape: 'path', points: [{x:550,y:250},{x:650,y:250},{x:670,y:200},{x:650,y:150},{x:550,y:150},{x:530,y:200}] },
+            ]
+        },
+    ];
+
+    // --- GAME OBJECTS ---
+    const ball = {
+        x: 0, y: 0, radius: 5,
+        vx: 0, vy: 0,
+        onGround: true
     };
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+    // --- PHYSICS & GAME LOGIC ---
+    function setupHole(holeIndex) {
+        if (holeIndex >= holes.length) {
+            endGame();
+            return;
+        }
+        const holeData = holes[holeIndex];
+        gameState.currentHole = holeIndex;
+        gameState.strokesForHole = 0;
+        
+        ball.x = holeData.tee.x;
+        ball.y = holeData.tee.y;
+        ball.vx = 0;
+        ball.vy = 0;
+        
+        gameState.viewMode = 'flyover';
+        gameState.flyoverProgress = 0;
+        
+        const initialZoom = window.innerHeight / 800;
+        gameState.camera.x = ball.x;
+        gameState.camera.y = ball.y;
+        gameState.camera.zoom = initialZoom;
+        
+        gameState.camera.targetX = ball.x;
+        gameState.camera.targetY = ball.y;
+        gameState.camera.targetZoom = initialZoom;
+
+        setNewWind();
+        updateHUD();
+        updateClubs(true);
+        getProTip();
+    }
+    
+    function getTerrainAt(x, y) {
+        const holeData = holes[gameState.currentHole];
+        let terrainType = 'r'; // Default to rough
+        
+        for (const terrain of [...holeData.terrain].reverse()) {
+             let inside = false;
+             for (let i = 0, j = terrain.points.length - 1; i < terrain.points.length; j = i++) {
+                 const xi = terrain.points[i].x, yi = terrain.points[i].y;
+                 const xj = terrain.points[j].x, yj = terrain.points[j].y;
+                 const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                 if (intersect) inside = !inside;
+             }
+             if (inside) return terrain.type;
+        }
+        return terrainType;
+    }
+
+    function hitBall() {
+        initAudio();
+        playSound('hit');
+        
+        gameState.viewMode = 'shot';
+        gameState.isShotInProgress = true;
+        gameState.ballInMotion = true;
+        gameState.strokesForHole++;
+        gameState.lastShotPosition = { x: ball.x, y: ball.y };
+
+        const currentTerrain = getTerrainAt(ball.x, ball.y);
+        let powerPenalty = 1.0;
+        if (currentTerrain === 'r') powerPenalty = 0.85;
+        if (currentTerrain === 's') powerPenalty = 0.65;
+
+        const totalPower = CLUBS[selectedClub].power * (gameState.power / 100) * powerPenalty;
+        
+        ball.vx = Math.sin(gameState.aimAngle) * totalPower * 0.2;
+        ball.vy = -Math.cos(gameState.aimAngle) * totalPower * 0.2;
+        
+        updateHUD();
+    }
+
+    function updatePhysics(delta) {
+        if (!gameState.ballInMotion) return;
+
+        ball.vx += gameState.wind.x * delta;
+        ball.vy += gameState.wind.y * delta;
+
+        const terrain = getTerrainAt(ball.x, ball.y);
+        let friction = 0.98;
+        if (terrain === 'g') friction = 0.96;
+        if (terrain === 'r') friction = 0.90;
+        if (terrain === 's') friction = 0.75;
+        
+        ball.vx *= friction;
+        ball.vy *= friction;
+
+        ball.x += ball.vx;
+        ball.y += ball.vy;
+
+        const holeData = holes[gameState.currentHole];
+        const distToHole = Math.hypot(ball.x - holeData.hole.x, ball.y - holeData.hole.y);
+        const ballSpeed = Math.hypot(ball.vx, ball.vy);
+        
+        if (distToHole < 8 && terrain === 'g' && ballSpeed < 3.0) {
+            playSound('cup');
+            gameState.ballInMotion = false;
+            ball.vx = 0;
+            ball.vy = 0;
+            ball.x = holeData.hole.x;
+            ball.y = holeData.hole.y;
+            endHole();
+            return;
+        }
+
+        if (ballSpeed < 0.2) {
+            ball.vx = 0;
+            ball.vy = 0;
+            gameState.ballInMotion = false;
+            checkBallPosition();
+        }
+    }
+    
+    function checkBallPosition() {
+        const holeData = holes[gameState.currentHole];
+        const terrain = getTerrainAt(ball.x, ball.y);
+        
+        if (ball.x < 0 || ball.x > 800 || ball.y < 0 || ball.y > 1200) {
+            handlePenalty("Out of Bounds", 1, gameState.lastShotPosition);
+            return;
+        }
+
+        if (terrain === 'w') {
+            playSound('water');
+            handlePenalty("Water Hazard", 1, null);
+            return;
+        }
+        
+        gameState.isShotInProgress = false;
+        gameState.viewMode = 'aiming';
+        gameState.camera.targetX = ball.x;
+        gameState.camera.targetY = ball.y;
+        updateClubs(true);
+    }
+
+    function handlePenalty(reason, strokes, returnPos) {
+        gameState.strokesForHole += strokes;
+        if (returnPos) {
+            ball.x = returnPos.x;
+            ball.y = returnPos.y;
+        } else {
+            ball.x = Math.max(50, Math.min(750, ball.x));
+            ball.y = Math.max(50, Math.min(1150, ball.y));
+            while(getTerrainAt(ball.x, ball.y) === 'w') {
+                ball.y += 20;
+            }
+        }
+        gameState.isShotInProgress = false;
+        gameState.viewMode = 'aiming';
+        gameState.camera.targetX = ball.x;
+        gameState.camera.targetY = ball.y;
+        updateHUD();
+        updateClubs(true);
+    }
+
+    function endHole() {
+        gameState.isShotInProgress = false;
+        const score = gameState.strokesForHole;
+        const par = holes[gameState.currentHole].par;
+        const diff = score - par;
+        gameState.totalScore += diff;
+
+        let title = '';
+        if (score === 1) title = "Hole in One!";
+        else if (diff <= -2) title = "Eagle!";
+        else if (diff === -1) title = "Birdie!";
+        else if (diff === 0) title = "Par";
+        else if (diff === 1) title = "Bogey";
+        else title = "Double Bogey+";
+
+        showModal(
+            title,
+            `You finished Hole ${gameState.currentHole + 1} in ${score} strokes.`,
+            (gameState.currentHole + 1 >= holes.length) ? "Finish Game" : "Next Hole",
+            () => {
+                modal.classList.remove('visible');
+                setupHole(gameState.currentHole + 1);
+            }
+        );
+    }
+    
+    function endGame() {
+        const finalScore = gameState.totalScore > 0 ? `+${gameState.totalScore}` : gameState.totalScore === 0 ? 'E' : gameState.totalScore;
+        showModal(
+            "Congratulations!",
+            `You completed the tour with a score of ${finalScore}.`,
+            "Play Again",
+            () => location.reload()
+        );
+        localStorage.removeItem('golfGameState');
+    }
+
+    // --- RENDERING ---
+    function drawCurvedPath(points) {
+        if (points.length < 2) return;
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length - 1; i++) {
+            const xc = (points[i].x + points[i + 1].x) / 2;
+            const yc = (points[i].y + points[i + 1].y) / 2;
+            ctx.quadraticCurveTo(points[i].x, points[i].y, xc, yc);
+        }
+        const last = points.length - 1;
+        ctx.quadraticCurveTo(points[last].x, points[last].y, points[0].x, points[0].y);
+        ctx.closePath();
+    }
+
+    function draw() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        const scale = gameState.camera.zoom;
+        
+        ctx.save();
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.scale(scale, scale);
+        ctx.translate(-gameState.camera.x, -gameState.camera.y);
+
+        const holeData = holes[gameState.currentHole];
+        
+        const rGrad = ctx.createLinearGradient(0, 0, 800, 1200);
+        rGrad.addColorStop(0, COLORS.roughLight);
+        rGrad.addColorStop(1, COLORS.roughDark);
+        ctx.fillStyle = rGrad;
+        ctx.fillRect(0, 0, 800, 1200);
+        
+        holeData.terrain.forEach(t => {
+            const terrainName = TERRAIN_MAP[t.type];
+            const colorLight = COLORS[`${terrainName}Light`];
+            const colorDark = COLORS[`${terrainName}Dark`];
+
+            drawCurvedPath(t.points);
+
+            const grad = ctx.createRadialGradient(holeData.hole.x, holeData.hole.y, 5, holeData.hole.x, holeData.hole.y, 1000);
+            grad.addColorStop(0, colorLight);
+            grad.addColorStop(1, colorDark);
+            ctx.fillStyle = grad;
+            ctx.fill();
+
+            if (t.type === 'f' || t.type === 'g' || t.type === 'r') {
+                ctx.save();
+                ctx.clip();
+                ctx.strokeStyle = "rgba(255,255,255,0.05)";
+                ctx.lineWidth = 1;
+                for(let i = 0; i < 1200; i+= 4) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, i);
+                    ctx.lineTo(800, i);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            } else if (t.type === 's') {
+                 ctx.save();
+                 ctx.clip();
+                 ctx.fillStyle = "rgba(0,0,0,0.05)";
+                 for(let i=0; i<1000; i++) {
+                    ctx.beginPath();
+                    ctx.arc(t.points[0].x + Math.random() * 150 - 75, t.points[0].y + Math.random() * 150 - 75, Math.random() * 1.5, 0, Math.PI*2);
+                    ctx.fill();
+                 }
+                 ctx.restore();
+            } else if (t.type === 'w') {
+                ctx.save();
+                ctx.clip();
+                ctx.strokeStyle = "rgba(255,255,255,0.2)";
+                ctx.lineWidth = 2;
+                const rippleTime = Date.now() / 500;
+                for(let i = 0; i < 20; i++) {
+                    ctx.beginPath();
+                    const phase = rippleTime + i * 0.5;
+                    ctx.moveTo(0, 600 + Math.sin(phase) * 10);
+                    ctx.bezierCurveTo(200, 600 + Math.sin(phase + 1) * 10, 600, 600 + Math.sin(phase - 1) * 10, 800, 600 + Math.sin(phase) * 10);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+        });
+
+        ctx.fillStyle = '#1e293b';
+        ctx.beginPath();
+        ctx.arc(holeData.hole.x, holeData.hole.y, 8, 0, Math.PI * 2);
+        ctx.fill();
+        
+        const windEffect = Math.sin(Date.now() / 200) * gameState.wind.speed * 2;
+        ctx.strokeStyle = '#f8fafc';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(holeData.hole.x, holeData.hole.y);
+        ctx.lineTo(holeData.hole.x, holeData.hole.y - 50);
+        ctx.stroke();
+        ctx.fillStyle = '#ef4444';
+        ctx.beginPath();
+        ctx.moveTo(holeData.hole.x, holeData.hole.y - 50);
+        ctx.lineTo(holeData.hole.x + 20 + windEffect, holeData.hole.y - 45);
+        ctx.lineTo(holeData.hole.x, holeData.hole.y - 40);
+        ctx.fill();
+
+        if (gameState.viewMode === 'aiming' && !gameState.isHitting) {
+            const aimLength = CLUBS[selectedClub].power * 1.5;
+            const endX = ball.x + Math.sin(gameState.aimAngle) * aimLength;
+            const endY = ball.y - Math.cos(gameState.aimAngle) * aimLength;
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+            ctx.lineWidth = 3;
+            ctx.setLineDash([10, 10]);
+            ctx.beginPath();
+            ctx.moveTo(ball.x, ball.y);
+            ctx.lineTo(endX, endY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        ctx.fillStyle = 'white';
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#94a3b8';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        
+        ctx.restore();
+    }
+
+    // --- GAME LOOP ---
+    let lastTime = 0;
+    function gameLoop(timestamp) {
+        const delta = (timestamp - lastTime) / 1000 || 0;
+        lastTime = timestamp;
+
+        if (gameState.viewMode === 'flyover') {
+            gameState.flyoverProgress += delta / 3; 
+            const holeData = holes[gameState.currentHole];
+            const ease = 0.5 - 0.5 * Math.cos(gameState.flyoverProgress * Math.PI);
+
+            if (gameState.flyoverProgress >= 1) {
+                gameState.viewMode = 'aiming';
+                gameState.camera.targetX = ball.x;
+                gameState.camera.targetY = ball.y;
+                caddyTipPanel.classList.remove('visible');
+            } else {
+                gameState.camera.targetX = ball.x + (holeData.hole.x - ball.x) * ease;
+                gameState.camera.targetY = ball.y + (holeData.hole.y - ball.y) * ease;
+            }
+        } else if (gameState.ballInMotion) {
+            updatePhysics(delta);
+            gameState.camera.targetX = ball.x;
+            gameState.camera.targetY = ball.y;
+        }
+        
+        const lerpFactor = 0.05;
+        gameState.camera.x += (gameState.camera.targetX - gameState.camera.x) * lerpFactor;
+        gameState.camera.y += (gameState.camera.targetY - gameState.camera.y) * lerpFactor;
+        gameState.camera.zoom += (gameState.camera.targetZoom - gameState.camera.zoom) * lerpFactor;
+
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+
+    // --- UI & CONTROLS ---
+    function updateHUD() {
+        const holeData = holes[gameState.currentHole];
+        hudHole.textContent = gameState.currentHole + 1;
+        hudPar.textContent = holeData.par;
+        hudStrokes.textContent = gameState.strokesForHole;
+        
+        const scoreText = gameState.totalScore > 0 ? `+${gameState.totalScore}` : gameState.totalScore === 0 ? 'E' : gameState.totalScore;
+        hudTotalScore.textContent = scoreText;
+        
+        const windDir = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(gameState.wind.angle / (Math.PI / 4)) % 8];
+        hudWind.textContent = `${Math.round(gameState.wind.speed * 5)}mph ${windDir}`;
+        
+        const distToPin = Math.hypot(ball.x - holeData.hole.x, ball.y - holeData.hole.y) / PIXELS_PER_YARD;
+        hudDistance.textContent = `${Math.round(distToPin)}y`;
+    }
+
+    function updateClubs(autoSelect = false) {
+        const holeData = holes[gameState.currentHole];
+        const distToPin = Math.hypot(ball.x - holeData.hole.x, ball.y - holeData.hole.y) / PIXELS_PER_YARD;
+        const terrain = getTerrainAt(ball.x, ball.y);
+        
+        if (autoSelect) {
+            if (terrain === 'g' || distToPin < 30) {
+                selectedClub = 'PT';
+            } else {
+                if (distToPin > 90) selectedClub = 'DR';
+                else if (distToPin > 70) selectedClub = '5I';
+                else if (distToPin > 50) selectedClub = '7I';
+                else selectedClub = 'PW';
+            }
+        }
+
+        let availableClubs = ['DR', '3W', '5I', '7I', 'PW'];
+        if (terrain === 'g' || distToPin < 30) {
+            availableClubs = ['PT'];
+        }
+        
+        clubSelectionContainer.innerHTML = '';
+        availableClubs.forEach(clubKey => {
+            const btn = document.createElement('button');
+            btn.className = 'club-btn';
+            btn.textContent = clubKey;
+            if (clubKey === selectedClub) btn.classList.add('selected');
+            btn.addEventListener('click', () => {
+                selectedClub = clubKey;
+                updateClubs(false);
+            });
+            clubSelectionContainer.appendChild(btn);
+        });
+    }
+    
+    function setNewWind() {
+        gameState.wind.speed = Math.random() * 5 + 2;
+        gameState.wind.angle = Math.random() * Math.PI * 2;
+        const windPower = gameState.wind.speed * 0.05;
+        gameState.wind.x = Math.sin(gameState.wind.angle) * windPower;
+        gameState.wind.y = -Math.cos(gameState.wind.angle) * windPower;
+    }
+
+    function startPowerMeter() {
+        if (gameState.isShotInProgress || gameState.isHitting || gameState.viewMode !== 'aiming') return;
+        gameState.isHitting = true;
+        let power = 0;
+        let direction = 1;
+        const powerInterval = setInterval(() => {
+            if (!gameState.isHitting) {
+                clearInterval(powerInterval);
+                return;
+            }
+            power += direction * 2.5;
+            if (power > 100) { power = 100; direction = -1; }
+            if (power < 0) { power = 0; direction = 1; }
+            gameState.power = power;
+            powerIndicator.style.height = `${power}%`;
+        }, 16);
+
+        function stopPowerMeter() {
+            document.removeEventListener('pointerup', stopPowerMeter);
+            document.removeEventListener('touchend', stopPowerMeter);
+            if (!gameState.isHitting) return;
+            gameState.isHitting = false;
+            clearInterval(powerInterval);
+            powerIndicator.style.height = '0%';
+            hitBall();
+        }
+        document.addEventListener('pointerup', stopPowerMeter);
+        document.addEventListener('touchend', stopPowerMeter);
+    }
+    
+    function showModal(title, text, btnText, btnCallback, showSecondaryBtn = false, secondaryBtnText = '', secondaryBtnCallback = null) {
+        modalTitle.textContent = title;
+        modalText.textContent = text;
+        modalBtnContainer.innerHTML = '';
+
+        const mainBtn = document.createElement('button');
+        mainBtn.id = 'modal-btn-main';
+        mainBtn.className = 'modal-btn';
+        mainBtn.textContent = btnText;
+        mainBtn.onclick = btnCallback;
+        
+        if (showSecondaryBtn) {
+            const secondaryBtn = document.createElement('button');
+            secondaryBtn.className = 'modal-btn secondary';
+            secondaryBtn.textContent = secondaryBtnText;
+            secondaryBtn.onclick = secondaryBtnCallback;
+            modalBtnContainer.appendChild(secondaryBtn);
+        }
+        
+        modalBtnContainer.appendChild(mainBtn);
+        modal.classList.add('visible');
+    }
+
+    // --- EVENT LISTENERS ---
+    let touchStartX = 0;
+    canvas.addEventListener('pointerdown', (e) => {
+        if (e.target === canvas) {
+            initAudio();
+            if (gameState.isShotInProgress || gameState.viewMode !== 'aiming') return;
+            touchStartX = e.clientX;
+            gameState.isAiming = true;
+        }
     });
 
-    if (!response.ok) {
-        const errorBody = await response.text();
-        throw new Error(`API call failed with status: ${response.status} - ${errorBody}`);
+    canvas.addEventListener('pointermove', (e) => {
+        if (gameState.isAiming) {
+            const deltaX = e.clientX - touchStartX;
+            gameState.aimAngle += deltaX * 0.005;
+            touchStartX = e.clientX;
+        }
+    });
+
+    canvas.addEventListener('pointerup', (e) => {
+        if (e.target === canvas) gameState.isAiming = false;
+    });
+
+    document.getElementById('power-meter-container').addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        startPowerMeter();
+    });
+    
+    // --- GEMINI API INTEGRATION ---
+
+    async function getProTip() {
+        caddyTipText.innerHTML = "✨ Thinking...";
+        caddyAudioBtn.innerHTML = `<div class="spinner"></div>`;
+        caddyTipPanel.classList.add('visible');
+
+        const holeData = holes[gameState.currentHole];
+        const distToPin = Math.round(Math.hypot(ball.x - holeData.hole.x, ball.y - holeData.hole.y) / PIXELS_PER_YARD);
+        
+        let hazardsDescription = "Hazards include: ";
+        const seenHazards = new Set();
+        holeData.terrain.forEach(t => {
+            if (t.type === 's' && !seenHazards.has('sand')) {
+                hazardsDescription += "sand traps, ";
+                seenHazards.add('sand');
+            }
+            if (t.type === 'w' && !seenHazards.has('water')) {
+                hazardsDescription += "water, ";
+                seenHazards.add('water');
+            }
+        });
+        if (seenHazards.size === 0) hazardsDescription = "The hole is clear of major hazards.";
+        
+        try {
+            const url = `${window.location.origin}/.netlify/functions/get-pro-tip`;
+            const response = await fetch(url, {
+                method: 'POST',
+                body: JSON.stringify({
+                    holeNumber: gameState.currentHole + 1,
+                    par: holeData.par,
+                    distToPin,
+                    hazardsDescription,
+                    wind: hudWind.textContent
+                })
+            });
+            const result = await response.json();
+            if (result.error) throw new Error(result.error);
+            
+            const tip = result.tip;
+            caddyTipText.textContent = tip;
+            getTTS(tip);
+        } catch (error) {
+            console.error("Error getting pro tip:", error);
+            caddyTipText.textContent = "Couldn't reach the caddy. Play smart!";
+            caddyAudioBtn.innerHTML = '';
+        }
     }
 
-    const result = await response.json();
-    
-    if (!result.candidates || result.candidates.length === 0) {
-        throw new Error("API returned no candidates in the response.");
+    async function getTTS(text) {
+        try {
+            const url = `${window.location.origin}/.netlify/functions/get-tts`;
+            const response = await fetch(url, {
+                method: 'POST',
+                body: JSON.stringify({ text })
+            });
+            const result = await response.json();
+            if (result.error) throw new Error(result.error);
+
+            const audioData = result.audioData;
+            
+            const pcmData = base64ToArrayBuffer(audioData);
+            const pcm16 = new Int16Array(pcmData);
+            const wavBlob = pcmToWav(pcm16, 24000); // Gemini TTS uses 24kHz sample rate
+            const audioUrl = URL.createObjectURL(wavBlob);
+
+            caddyAudio.src = audioUrl;
+            caddyAudio.play();
+            
+            caddyAudioBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>`;
+            caddyAudioBtn.onclick = () => caddyAudio.play();
+
+        } catch (error) {
+            console.error("Error getting TTS:", error);
+            caddyAudioBtn.innerHTML = '';
+        }
     }
     
-    const audioData = result.candidates[0].content.parts[0].inlineData.data;
+    // Helper functions for TTS Audio
+    function base64ToArrayBuffer(base64) {
+        const binaryString = window.atob(base64);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
 
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ audioData }),
-    };
+    function pcmToWav(pcmData, sampleRate) {
+        const numSamples = pcmData.length;
+        const numChannels = 1;
+        const bytesPerSample = 2;
+        const blockAlign = numChannels * bytesPerSample;
+        const byteRate = sampleRate * blockAlign;
+        const dataSize = numSamples * blockAlign;
+        const buffer = new ArrayBuffer(44 + dataSize);
+        const view = new DataView(buffer);
 
-  } catch (error) {
-    console.error('Error in get-tts function:', error.message);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: `Failed to fetch TTS audio: ${error.message}` }),
-    };
-  }
-};
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        }
+
+        writeString(view, 0, 'RIFF');
+        view.setUint32(4, 36 + dataSize, true);
+        writeString(view, 8, 'WAVE');
+        writeString(view, 12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, numChannels, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, byteRate, true);
+        view.setUint16(32, blockAlign, true);
+        view.setUint16(34, 16, true);
+        writeString(view, 36, 'data');
+        view.setUint32(40, dataSize, true);
+
+        for (let i = 0; i < numSamples; i++) {
+            view.setInt16(44 + i * 2, pcmData[i], true);
+        }
+
+        return new Blob([view], { type: 'audio/wav' });
+    }
+
+
+    // --- INITIALIZATION ---
+    function loadColors() {
+        const computedStyles = getComputedStyle(document.documentElement);
+        const colorNames = [
+            'fairway-light', 'fairway-dark',
+            'rough-light', 'rough-dark',
+            'green-light', 'green-dark',
+            'sand-light', 'sand-dark',
+            'water-light', 'water-dark'
+        ];
+        colorNames.forEach(name => {
+            const key = name.replace(/-(\w)/g, (match, p1) => p1.toUpperCase());
+            COLORS[key] = computedStyles.getPropertyValue(`--color-${name}`).trim();
+        });
+    }
+
+    function init() {
+        const startNewGame = () => {
+            localStorage.removeItem('golfGameState');
+            modal.classList.remove('visible');
+            setupHole(0);
+            requestAnimationFrame(gameLoop);
+        };
+
+        const resumeGame = (savedState) => {
+            gameState = JSON.parse(savedState);
+            modal.classList.remove('visible');
+            setupHole(gameState.currentHole);
+            requestAnimationFrame(gameLoop);
+        };
+
+        const savedState = localStorage.getItem('golfGameState');
+        if (savedState) {
+            showModal(
+                "Welcome Back!",
+                "Would you like to resume your previous game?",
+                "Resume",
+                () => resumeGame(savedState),
+                true,
+                "New Game",
+                startNewGame
+            );
+        } else {
+            startNewGame();
+        }
+        
+        window.addEventListener('beforeunload', () => {
+            if (gameState.currentHole < holes.length) {
+                localStorage.setItem('golfGameState', JSON.stringify(gameState));
+            }
+        });
+    }
+
+    window.addEventListener('load', () => {
+        loadColors();
+        setTimeout(() => {
+            splashscreen.classList.add('hide');
+            setTimeout(init, 500);
+        }, 3000);
+    });
+
+    </script>
+</body>
+</html>
